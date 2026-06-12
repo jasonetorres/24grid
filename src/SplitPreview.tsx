@@ -63,7 +63,7 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
 
     // Sync play / pause with per-slot start offsets
     useEffect(() => {
-      videoRefs.current.forEach((v, i) => {
+      videoRefs.current.forEach((v) => {
         if (!v || !v.src) return;
         if (isPlaying) {
           // Only reset to offset when starting playback, not on every render

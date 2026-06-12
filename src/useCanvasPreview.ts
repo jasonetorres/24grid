@@ -22,6 +22,7 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const previewCanvas = canvas;
 
     let rafId = 0;
 
@@ -101,7 +102,7 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
 
     function render() {
       const { layout: l, videoRefs: vr, canvasWidth: cw, canvasHeight: ch } = stateRef.current;
-      const ctx = canvas.getContext('2d');
+      const ctx = previewCanvas.getContext('2d');
       if (!ctx) { rafId = requestAnimationFrame(render); return; }
 
       ctx.fillStyle = '#000';

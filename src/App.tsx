@@ -109,6 +109,7 @@ export default function App() {
 
     const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
     if (!canvas) { setIsExporting(false); return; }
+    const exportCanvas = canvas;
 
     const assigned = panels.map((_, i) => slotClips[i]).filter(Boolean) as Clip[];
     const duration = Math.min(assigned.reduce((m, c) => Math.max(m, c.duration), 5), 60);
@@ -160,7 +161,7 @@ export default function App() {
           if (elapsed >= 1000 / FPS - 1) {
             lastCapture = now;
             const timestamp = Math.round((frameIndex / FPS) * 1_000_000); // microseconds
-            const videoFrame = new VideoFrame(canvas, { timestamp });
+            const videoFrame = new VideoFrame(exportCanvas, { timestamp });
             encoder.encode(videoFrame, { keyFrame: frameIndex % (FPS * 2) === 0 });
             videoFrame.close();
             frameIndex++;

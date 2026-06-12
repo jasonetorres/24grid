@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import { useRef } from 'react';
 import { Upload, Film, X } from 'lucide-react';
 import type { Clip } from './types';
 
