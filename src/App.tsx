@@ -116,8 +116,7 @@ export default function App() {
     setCrops(prev => { const n = [...prev]; n[i] = crop; return n; });
   }
 
-  function handleSplitPanel(index: number, dir: 'h' | 'v') {
-    const panel = panels[index];
+  function handleSplitPanel(index: number, dir: 'h' | 'v') {    const panel = panels[index];
     let newPanels: PanelRect[];
     if (dir === 'h') {
       const half = panel.w / 2;
@@ -140,6 +139,29 @@ export default function App() {
     setSlotClips(prev => { const n = [...prev]; n.splice(index + 1, 0, null); return n; });
     setDelays(prev => { const n = [...prev]; n.splice(index + 1, 0, 0); return n; });
     setCrops(prev => { const n = [...prev]; n.splice(index + 1, 0, { ...DEFAULT_CROP }); return n; });
+  }
+
+  function handlePanelsChange(newPanels: PanelRect[]) {
+    // When the ONLY panel moves away from full-frame, automatically insert
+    // a full-background panel behind it so the user gets a PIP layout.
+    if (panels.length === 1 && newPanels.length === 1) {
+      const was = panels[0];
+      const now = newPanels[0];
+      const wasFullFrame =
+        Math.abs(was.x) < 0.005 && Math.abs(was.y) < 0.005 &&
+        Math.abs(was.w - 1) < 0.005 && Math.abs(was.h - 1) < 0.005;
+      const isFullFrame =
+        Math.abs(now.x) < 0.005 && Math.abs(now.y) < 0.005 &&
+        Math.abs(now.w - 1) < 0.005 && Math.abs(now.h - 1) < 0.005;
+      if (wasFullFrame && !isFullFrame) {
+        setPanels([{ x: 0, y: 0, w: 1, h: 1 }, ...newPanels]);
+        setSlotClips(prev => [null, ...prev]);
+        setDelays(prev => [0, ...prev]);
+        setCrops(prev => [{ ...DEFAULT_CROP }, ...prev]);
+        return;
+      }
+    }
+    setPanels(newPanels);
   }
 
   function handleResetLayout() {
@@ -444,7 +466,7 @@ export default function App() {
                       ref={previewRef}
                       layout={layout}
                       panels={panels}
-                      onPanelsChange={setPanels}
+                      onPanelsChange={handlePanelsChange}
                       slotClips={slotClips}
                       delays={delays}
                       crops={crops}
@@ -505,7 +527,7 @@ export default function App() {
                         ref={previewRef}
                         layout={layout}
                         panels={panels}
-                        onPanelsChange={setPanels}
+                        onPanelsChange={handlePanelsChange}
                         slotClips={slotClips}
                         delays={delays}
                         crops={crops}
@@ -590,7 +612,7 @@ export default function App() {
                       ref={previewRef}
                       layout={layout}
                       panels={panels}
-                      onPanelsChange={setPanels}
+                      onPanelsChange={handlePanelsChange}
                       slotClips={slotClips}
                       delays={delays}
                       crops={crops}
@@ -728,7 +750,7 @@ export default function App() {
                         ref={previewRef}
                         layout={layout}
                         panels={panels}
-                        onPanelsChange={setPanels}
+                        onPanelsChange={handlePanelsChange}
                         slotClips={slotClips}
                         delays={delays}
                         crops={crops}

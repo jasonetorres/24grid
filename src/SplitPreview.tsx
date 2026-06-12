@@ -21,6 +21,16 @@ export const DIMS: Record<AspectRatio, { cw: number; ch: number; paddingTop: str
   '4:5':  { cw: 720,  ch: 900,  paddingTop: '125%',    label: '720×900'   },
 };
 
+type DragType = 'move' | 'tl' | 'tr' | 'bl' | 'br';
+
+interface PanelDragState {
+  type: DragType;
+  panelIndex: number;
+  startClientX: number;
+  startClientY: number;
+  startPanel: PanelRect;
+}
+
 interface Props {
   layout: LayoutDef | null;
   panels: PanelRect[];
@@ -46,8 +56,42 @@ export interface SplitPreviewHandle {
 }
 
 const MAX_SLOTS = 8;
-
+const MIN_PANEL = 0.08;
 const springTransition = { type: 'spring' as const, stiffness: 100, damping: 15 };
+
+const CORNER_CURSORS: Record<DragType, string> = {
+  move: 'grab',
+  tl: 'nwse-resize',
+  tr: 'nesw-resize',
+  bl: 'nesw-resize',
+  br: 'nwse-resize',
+};
+
+function computeNewPanel(drag: PanelDragState, dx: number, dy: number): PanelRect {
+  const { type, startPanel: p } = drag;
+  if (type === 'move') {
+    return {
+      ...p,
+      x: Math.max(0, Math.min(1 - p.w, p.x + dx)),
+      y: Math.max(0, Math.min(1 - p.h, p.y + dy)),
+    };
+  }
+  if (type === 'tl') {
+    const newX = Math.max(0, Math.min(p.x + p.w - MIN_PANEL, p.x + dx));
+    const newY = Math.max(0, Math.min(p.y + p.h - MIN_PANEL, p.y + dy));
+    return { x: newX, y: newY, w: p.x + p.w - newX, h: p.y + p.h - newY };
+  }
+  if (type === 'tr') {
+    const newY = Math.max(0, Math.min(p.y + p.h - MIN_PANEL, p.y + dy));
+    return { ...p, y: newY, w: Math.max(MIN_PANEL, Math.min(1 - p.x, p.w + dx)), h: p.y + p.h - newY };
+  }
+  if (type === 'bl') {
+    const newX = Math.max(0, Math.min(p.x + p.w - MIN_PANEL, p.x + dx));
+    return { ...p, x: newX, w: p.x + p.w - newX, h: Math.max(MIN_PANEL, Math.min(1 - p.y, p.h + dy)) };
+  }
+  // br
+  return { ...p, w: Math.max(MIN_PANEL, Math.min(1 - p.x, p.w + dx)), h: Math.max(MIN_PANEL, Math.min(1 - p.y, p.h + dy)) };
+}
 
 const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
   (
@@ -77,11 +121,12 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
     const activeSlots = useRef<boolean[]>(Array(MAX_SLOTS).fill(true));
     const cropsRef = useRef<CropSettings[]>(crops);
     const timeoutRefs = useRef<(ReturnType<typeof setTimeout> | null)[]>(Array(MAX_SLOTS).fill(null));
+    const containerRef = useRef<HTMLDivElement>(null);
+    const panelDragRef = useRef<PanelDragState | null>(null);
     const [hoverSlot, setHoverSlot] = useState<number | null>(null);
+    const [draggingPanelIdx, setDraggingPanelIdx] = useState<number | null>(null);
 
-    // Keep cropsRef current
     useEffect(() => { cropsRef.current = crops; }, [crops]);
-
     useImperativeHandle(ref, () => ({ videoRefs }));
 
     const canvasRef = useCanvasPreview({
@@ -93,7 +138,7 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
       canvasHeight: ch,
     });
 
-    // Handle play/pause with delays
+    // Play/pause with delays
     useEffect(() => {
       if (isPlaying) {
         videoRefs.current.forEach((v, i) => {
@@ -114,24 +159,23 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
           }
         });
       } else {
-        timeoutRefs.current.forEach((t) => { if (t !== null) clearTimeout(t); });
+        timeoutRefs.current.forEach(t => { if (t !== null) clearTimeout(t); });
         timeoutRefs.current = Array(MAX_SLOTS).fill(null);
         activeSlots.current = Array(MAX_SLOTS).fill(true);
-        videoRefs.current.forEach((v) => { if (v?.src) v.pause(); });
+        videoRefs.current.forEach(v => { if (v?.src) v.pause(); });
       }
     }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
       if (!isPlaying) return;
-      timeoutRefs.current.forEach((t) => { if (t !== null) clearTimeout(t); });
+      timeoutRefs.current.forEach(t => { if (t !== null) clearTimeout(t); });
       timeoutRefs.current = Array(MAX_SLOTS).fill(null);
     }, [delays]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => () => {
-      timeoutRefs.current.forEach((t) => { if (t !== null) clearTimeout(t); });
+      timeoutRefs.current.forEach(t => { if (t !== null) clearTimeout(t); });
     }, []);
 
-    // Sync clip sources
     useEffect(() => {
       videoRefs.current.forEach((v, i) => {
         if (!v) return;
@@ -144,32 +188,61 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
       });
     }, [slotClips]);
 
-    const handleDrop = useCallback(
-      (e: React.DragEvent, i: number) => {
-        e.preventDefault();
-        setHoverSlot(null);
-        if (draggingClipId) onDropClip(i, draggingClipId);
-      },
-      [draggingClipId, onDropClip]
-    );
+    const handleDrop = useCallback((e: React.DragEvent, i: number) => {
+      e.preventDefault();
+      setHoverSlot(null);
+      if (draggingClipId) onDropClip(i, draggingClipId);
+    }, [draggingClipId, onDropClip]);
+
+    // ── Panel drag handlers ──────────────────────────────────────────────────
+    function startPanelDrag(e: React.PointerEvent, index: number, type: DragType) {
+      if (!onPanelsChange || !resizable) return;
+      e.preventDefault();
+      e.stopPropagation();
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      panelDragRef.current = {
+        type,
+        panelIndex: index,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startPanel: { ...panels[index] },
+      };
+      setDraggingPanelIdx(index);
+    }
+
+    function onPanelPointerMove(e: React.PointerEvent) {
+      if (!panelDragRef.current || !containerRef.current || !onPanelsChange) return;
+      const drag = panelDragRef.current;
+      const rect = containerRef.current.getBoundingClientRect();
+      const dx = (e.clientX - drag.startClientX) / rect.width;
+      const dy = (e.clientY - drag.startClientY) / rect.height;
+      const newPanel = computeNewPanel(drag, dx, dy);
+      const updated = panels.map((p, i) => i === drag.panelIndex ? newPanel : p);
+      onPanelsChange(updated);
+    }
+
+    function onPanelPointerUp() {
+      panelDragRef.current = null;
+      setDraggingPanelIdx(null);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
 
     return (
       <div className={className}>
-        {/* Hidden video elements */}
         <div className="hidden">
           {Array.from({ length: MAX_SLOTS }).map((_, i) => (
             <video
               key={i}
-              ref={(el) => { videoRefs.current[i] = el; }}
-              muted
-              loop
-              playsInline
+              ref={el => { videoRefs.current[i] = el; }}
+              muted loop playsInline
               className="w-full h-full object-cover"
             />
           ))}
         </div>
 
         <motion.div
+          ref={containerRef}
           animate={{ paddingTop }}
           transition={{ type: 'spring', stiffness: 120, damping: 18 }}
           className="relative w-full rounded-xl overflow-hidden border border-gray-800 shadow-2xl bg-black"
@@ -193,30 +266,34 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
               >
                 {panels.map((panel, i) => {
                   const isHover = hoverSlot === i;
-                  const isDragging = !!draggingClipId;
+                  const isClipDragging = !!draggingClipId;
                   const hasClip = !!slotClips[i];
                   const hasCrop = crops[i] && (crops[i].zoom > 1 || crops[i].panX !== 0 || crops[i].panY !== 0);
+                  const isPanelBeingDragged = draggingPanelIdx === i;
 
                   return (
                     <motion.div
                       key={`${layout.id}-${i}`}
-                      layout
+                      // Disable layout animation while this panel is being dragged
+                      layout={!isPanelBeingDragged}
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.92 }}
                       transition={springTransition}
                       className="absolute group"
                       style={{
-                        left: `calc(${panel.x * 100}% + 2px)`,
-                        top: `calc(${panel.y * 100}% + 2px)`,
-                        width: `calc(${panel.w * 100}% - 4px)`,
+                        left:   `calc(${panel.x * 100}% + 2px)`,
+                        top:    `calc(${panel.y * 100}% + 2px)`,
+                        width:  `calc(${panel.w * 100}% - 4px)`,
                         height: `calc(${panel.h * 100}% - 4px)`,
+                        // Bring overlapping panels to front via z-index
+                        zIndex: i,
                       }}
-                      onDragOver={(e) => { e.preventDefault(); setHoverSlot(i); }}
+                      onDragOver={e => { e.preventDefault(); setHoverSlot(i); }}
                       onDragLeave={() => setHoverSlot(null)}
-                      onDrop={(e) => handleDrop(e, i)}
+                      onDrop={e => handleDrop(e, i)}
                     >
-                      {/* "24"-style entrance flash — amber tint that fades out on mount */}
+                      {/* Entrance flash */}
                       <motion.div
                         key={`flash-${layout.id}-${i}`}
                         className="absolute inset-0 rounded pointer-events-none"
@@ -225,7 +302,21 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                         transition={{ duration: 0.55, ease: 'easeOut', delay: i * 0.06 }}
                       />
 
-                      {isDragging && (
+                      {/* Drag-to-move handle — covers panel body, below buttons */}
+                      {resizable && onPanelsChange && !isClipDragging && (
+                        <div
+                          className="absolute inset-0 z-0"
+                          style={{ cursor: isPanelBeingDragged ? 'grabbing' : 'grab' }}
+                          title="Drag to move panel"
+                          onPointerDown={e => startPanelDrag(e, i, 'move')}
+                          onPointerMove={onPanelPointerMove}
+                          onPointerUp={onPanelPointerUp}
+                          onPointerCancel={onPanelPointerUp}
+                        />
+                      )}
+
+                      {/* Clip drop zone highlight */}
+                      {isClipDragging && (
                         <motion.div
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
@@ -235,7 +326,7 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                           }`}
                         >
                           {isHover && (
-                            <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                               <span className="text-amber-400 text-xs font-bold bg-black/70 px-2 py-1 rounded">
                                 Drop here
                               </span>
@@ -244,10 +335,10 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                         </motion.div>
                       )}
 
-                      {/* Tap-to-place overlay for mobile */}
-                      {tapSelectedClipId && !hasClip && !isDragging && (
+                      {/* Tap-to-place overlay (mobile) */}
+                      {tapSelectedClipId && !hasClip && !isClipDragging && (
                         <div
-                          className="absolute inset-0 border-2 border-dashed border-amber-400 rounded flex items-center justify-center cursor-pointer"
+                          className="absolute inset-0 border-2 border-dashed border-amber-400 rounded flex items-center justify-center cursor-pointer z-10"
                           style={{ background: 'rgba(251,191,36,0.12)' }}
                           onClick={() => onTapSlot?.(i)}
                         >
@@ -257,8 +348,9 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                         </div>
                       )}
 
-                      {!isDragging && (
-                        <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-10">
+                      {/* Action buttons (top-right) */}
+                      {!isClipDragging && (
+                        <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
                           {onSplitPanel && (
                             <>
                               <button
@@ -299,11 +391,36 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                           )}
                         </div>
                       )}
+
+                      {/* Corner resize handles */}
+                      {resizable && onPanelsChange && !isClipDragging && (
+                        <>
+                          {(['tl', 'tr', 'bl', 'br'] as const).map(corner => (
+                            <div
+                              key={corner}
+                              className="absolute w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity z-20 rounded-sm"
+                              style={{
+                                background: 'rgba(251,191,36,0.8)',
+                                cursor: CORNER_CURSORS[corner],
+                                ...(corner === 'tl' ? { top: 0, left: 0 } :
+                                    corner === 'tr' ? { top: 0, right: 0 } :
+                                    corner === 'bl' ? { bottom: 0, left: 0 } :
+                                                      { bottom: 0, right: 0 }),
+                              }}
+                              onPointerDown={e => { e.stopPropagation(); startPanelDrag(e, i, corner); }}
+                              onPointerMove={onPanelPointerMove}
+                              onPointerUp={onPanelPointerUp}
+                              onPointerCancel={onPanelPointerUp}
+                            />
+                          ))}
+                        </>
+                      )}
                     </motion.div>
                   );
                 })}
 
-                {resizable && !draggingClipId && onPanelsChange && (
+                {/* Edge divider resizer (only when no panel drag is active) */}
+                {resizable && !draggingClipId && !draggingPanelIdx && onPanelsChange && (
                   <PanelResizer panels={panels} onChange={onPanelsChange} />
                 )}
               </motion.div>
