@@ -2,6 +2,13 @@ import type { LayoutDef } from './types';
 
 export const LAYOUTS: LayoutDef[] = [
   {
+    id: '1-full',
+    label: 'Full Frame',
+    slots: 1,
+    description: 'Single full-frame panel — split it with the ⊞ buttons to add more',
+    panels: [{ x: 0, y: 0, w: 1, h: 1 }],
+  },
+  {
     id: '2-side-by-side',
     label: 'Side by Side',
     slots: 2,

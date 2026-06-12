@@ -44,8 +44,8 @@ const AR_OPTIONS: { value: AspectRatio; label: string }[] = [
 export default function App() {
   const [view, setView] = useState<View>('landing');
   const [step, setStep] = useState<Step>('layout');
-  const [layout, setLayout] = useState<LayoutDef | null>(LAYOUTS[5]);
-  const [panels, setPanels] = useState<PanelRect[]>(LAYOUTS[5].panels.map(p => ({ ...p })));
+  const [layout, setLayout] = useState<LayoutDef | null>(LAYOUTS[0]);
+  const [panels, setPanels] = useState<PanelRect[]>(LAYOUTS[0].panels.map(p => ({ ...p })));
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [clips, setClips] = useState<Clip[]>([]);
   const [slotClips, setSlotClips] = useState<(Clip | null)[]>([...EMPTY_SLOTS]);
@@ -102,9 +102,39 @@ export default function App() {
     setCrops((prev) => { const n = [...prev]; n[i] = crop; return n; });
   }
 
+  function handleSplitPanel(index: number, dir: 'h' | 'v') {
+    const panel = panels[index];
+    let newPanels: PanelRect[];
+    if (dir === 'h') {
+      const half = panel.w / 2;
+      newPanels = [
+        ...panels.slice(0, index),
+        { ...panel, w: half },
+        { x: panel.x + half, y: panel.y, w: half, h: panel.h },
+        ...panels.slice(index + 1),
+      ];
+    } else {
+      const half = panel.h / 2;
+      newPanels = [
+        ...panels.slice(0, index),
+        { ...panel, h: half },
+        { x: panel.x, y: panel.y + half, w: panel.w, h: half },
+        ...panels.slice(index + 1),
+      ];
+    }
+    setPanels(newPanels);
+    setSlotClips((prev) => { const n = [...prev]; n.splice(index + 1, 0, null); return n; });
+    setDelays((prev) => { const n = [...prev]; n.splice(index + 1, 0, 0); return n; });
+    setCrops((prev) => { const n = [...prev]; n.splice(index + 1, 0, { ...DEFAULT_CROP }); return n; });
+  }
+
   function handleResetLayout() {
     if (!layout) return;
-    setPanels(layout.panels.map(p => ({ ...p })));
+    const originalPanels = layout.panels.map(p => ({ ...p }));
+    setPanels(originalPanels);
+    setSlotClips([...EMPTY_SLOTS]);
+    setDelays([...EMPTY_DELAYS]);
+    setCrops(EMPTY_CROPS());
   }
 
   function handleReset() {
@@ -200,7 +230,7 @@ export default function App() {
     }
   }
 
-  const slotCount = layout?.slots ?? 0;
+  const slotCount = panels.length;
   const filledSlots = panels.map((_, i) => slotClips[i]).filter(Boolean).length;
 
   const isPanelsModified = layout
@@ -392,6 +422,7 @@ export default function App() {
                       onDropClip={handleDropClip}
                       onClearSlot={handleClearSlot}
                       onCropClick={setCropEditorSlot}
+                      onSplitPanel={handleSplitPanel}
                       isPlaying={false}
                       resizable
                       aspectRatio={aspectRatio}
@@ -445,7 +476,7 @@ export default function App() {
                             </p>
                             <SlotTimingEditor
                               slotClips={slotClips}
-                              panelCount={layout?.slots ?? 0}
+                              panelCount={slotCount}
                               delays={delays}
                               onChange={handleDelayChange}
                             />
@@ -595,6 +626,7 @@ export default function App() {
                       onDropClip={handleDropClip}
                       onClearSlot={handleClearSlot}
                       onCropClick={setCropEditorSlot}
+                      onSplitPanel={handleSplitPanel}
                       isPlaying={isPlaying}
                       resizable
                       aspectRatio={aspectRatio}

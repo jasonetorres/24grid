@@ -1,4 +1,5 @@
 export type LayoutId =
+  | '1-full'
   | '2-side-by-side'
   | '2-stacked'
   | '3-left-main'

@@ -7,7 +7,7 @@ import React, {
   useImperativeHandle,
 } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Crop } from 'lucide-react';
+import { Crop, Columns2, Rows2 } from 'lucide-react';
 import type { LayoutDef, Clip, PanelRect, CropSettings } from './types';
 import { useCanvasPreview } from './useCanvasPreview';
 import PanelResizer from './PanelResizer';
@@ -32,6 +32,7 @@ interface Props {
   onDropClip: (slotIndex: number, clipId: string) => void;
   onClearSlot: (slotIndex: number) => void;
   onCropClick?: (slotIndex: number) => void;
+  onSplitPanel?: (slotIndex: number, dir: 'h' | 'v') => void;
   isPlaying: boolean;
   resizable?: boolean;
   aspectRatio?: AspectRatio;
@@ -59,6 +60,7 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
       onDropClip,
       onClearSlot,
       onCropClick,
+      onSplitPanel,
       isPlaying,
       resizable = false,
       aspectRatio = '16:9',
@@ -238,28 +240,46 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                         </motion.div>
                       )}
 
-                      {!isDragging && hasClip && (
+                      {!isDragging && (
                         <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-10">
-                          {onCropClick && (
+                          {onSplitPanel && (
+                            <>
+                              <button
+                                onClick={() => onSplitPanel(i, 'h')}
+                                className="w-6 h-6 bg-black/70 hover:bg-gray-600 text-white rounded-full flex items-center justify-center transition-colors"
+                                title="Split left/right"
+                              >
+                                <Columns2 className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => onSplitPanel(i, 'v')}
+                                className="w-6 h-6 bg-black/70 hover:bg-gray-600 text-white rounded-full flex items-center justify-center transition-colors"
+                                title="Split top/bottom"
+                              >
+                                <Rows2 className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
+                          {onCropClick && hasClip && (
                             <button
                               onClick={() => onCropClick(i)}
-                              className={`w-6 h-6 rounded-full text-xs flex items-center justify-center transition-colors ${
-                                hasCrop
-                                  ? 'bg-amber-400 text-black'
-                                  : 'bg-black/70 hover:bg-amber-400 text-white hover:text-black'
+                              className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors ${
+                                hasCrop ? 'bg-amber-400 text-black' : 'bg-black/70 hover:bg-amber-400 text-white hover:text-black'
                               }`}
                               title="Crop & Pan"
                             >
                               <Crop className="w-3 h-3" />
                             </button>
                           )}
-                          <button
-                            onClick={() => onClearSlot(i)}
-                            className="w-6 h-6 bg-black/70 hover:bg-red-500 rounded-full text-white text-sm flex items-center justify-center leading-none"
-                            title="Remove clip"
-                          >
-                            ×
-                          </button>
+                          {hasClip && (
+                            <button
+                              onClick={() => onClearSlot(i)}
+                              className="w-6 h-6 bg-black/70 hover:bg-red-500 rounded-full text-white text-sm flex items-center justify-center leading-none"
+                              title="Remove clip"
+                            >
+                              ×
+                            </button>
+                          )}
                         </div>
                       )}
                     </motion.div>
