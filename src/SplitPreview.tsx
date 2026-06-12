@@ -159,14 +159,11 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
           ))}
         </div>
 
-        {/* Canvas container — entrance animation on mount */}
+        {/* Canvas container — animates paddingTop on aspect ratio change, never remounts */}
         <motion.div
-          key={aspectRatio}
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
+          animate={{ paddingTop }}
           transition={{ type: 'spring', stiffness: 120, damping: 18 }}
           className="relative w-full rounded-xl overflow-hidden border border-gray-800 shadow-2xl bg-black"
-          style={{ paddingTop }}
         >
           <canvas
             ref={canvasRef}
