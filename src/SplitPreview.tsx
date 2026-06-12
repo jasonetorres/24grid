@@ -10,29 +10,35 @@ import type { LayoutDef, Clip, PanelRect } from './types';
 import { useCanvasPreview } from './useCanvasPreview';
 import PanelResizer from './PanelResizer';
 
-const DIMS: Record<'16:9' | '9:16', { cw: number; ch: number; paddingTop: string }> = {
-  '16:9': { cw: 1280, ch: 720,  paddingTop: '56.25%' },
-  '9:16': { cw: 720,  ch: 1280, paddingTop: '177.78%' },
+export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:5';
+
+export const DIMS: Record<AspectRatio, { cw: number; ch: number; paddingTop: string; label: string }> = {
+  '16:9': { cw: 1280, ch: 720,  paddingTop: '56.25%',  label: '1280×720'  },
+  '9:16': { cw: 720,  ch: 1280, paddingTop: '177.78%', label: '720×1280'  },
+  '1:1':  { cw: 720,  ch: 720,  paddingTop: '100%',    label: '720×720'   },
+  '4:5':  { cw: 720,  ch: 900,  paddingTop: '125%',    label: '720×900'   },
 };
 
 interface Props {
   layout: LayoutDef | null;
-  panels: PanelRect[];           // controlled — caller owns panel geometry
+  panels: PanelRect[];
   onPanelsChange?: (p: PanelRect[]) => void;
   slotClips: (Clip | null)[];
-  offsets: number[];             // per-slot start-time in seconds
+  delays: number[];          // seconds of black before each clip starts
   draggingClipId: string | null;
   onDropClip: (slotIndex: number, clipId: string) => void;
   onClearSlot: (slotIndex: number) => void;
   isPlaying: boolean;
   resizable?: boolean;
-  aspectRatio?: '16:9' | '9:16';
+  aspectRatio?: AspectRatio;
   className?: string;
 }
 
 export interface SplitPreviewHandle {
   videoRefs: React.MutableRefObject<(HTMLVideoElement | null)[]>;
 }
+
+const MAX_SLOTS = 8;
 
 const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
   (
@@ -41,7 +47,7 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
       panels,
       onPanelsChange,
       slotClips,
-      offsets,
+      delays,
       draggingClipId,
       onDropClip,
       onClearSlot,
@@ -53,28 +59,68 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
     ref
   ) => {
     const { cw, ch, paddingTop } = DIMS[aspectRatio];
-    const MAX_SLOTS = 8;
     const videoRefs = useRef<(HTMLVideoElement | null)[]>(Array(MAX_SLOTS).fill(null));
+    const activeSlots = useRef<boolean[]>(Array(MAX_SLOTS).fill(true));
+    const timeoutRefs = useRef<(ReturnType<typeof setTimeout> | null)[]>(Array(MAX_SLOTS).fill(null));
     const [hoverSlot, setHoverSlot] = useState<number | null>(null);
 
     useImperativeHandle(ref, () => ({ videoRefs }));
 
-    const canvasRef = useCanvasPreview({ layout: layout ? { ...layout, panels } : null, videoRefs, canvasWidth: cw, canvasHeight: ch });
+    const canvasRef = useCanvasPreview({
+      layout: layout ? { ...layout, panels } : null,
+      videoRefs,
+      activeSlots,
+      canvasWidth: cw,
+      canvasHeight: ch,
+    });
 
-    // Sync play / pause with per-slot start offsets
+    // Handle play/pause with delays
     useEffect(() => {
-      videoRefs.current.forEach((v) => {
-        if (!v || !v.src) return;
-        if (isPlaying) {
-          // Only reset to offset when starting playback, not on every render
-          v.play().catch(() => {});
-        } else {
-          v.pause();
-        }
-      });
-    }, [isPlaying]);
+      if (isPlaying) {
+        // Mark all slots with a clip as inactive (black) if they have a delay
+        videoRefs.current.forEach((v, i) => {
+          if (!v?.src) return;
+          const delay = delays[i] ?? 0;
+          if (delay > 0) {
+            activeSlots.current[i] = false;
+            v.pause();
+            // Schedule activation after delay
+            timeoutRefs.current[i] = setTimeout(() => {
+              activeSlots.current[i] = true;
+              v.currentTime = 0;
+              v.play().catch(() => {});
+            }, delay * 1000);
+          } else {
+            activeSlots.current[i] = true;
+            v.currentTime = 0;
+            v.play().catch(() => {});
+          }
+        });
+      } else {
+        // Clear all pending delay timeouts
+        timeoutRefs.current.forEach((t) => { if (t !== null) clearTimeout(t); });
+        timeoutRefs.current = Array(MAX_SLOTS).fill(null);
+        // Restore all slots to active (so placeholders render normally when paused)
+        activeSlots.current = Array(MAX_SLOTS).fill(true);
+        videoRefs.current.forEach((v) => { if (v?.src) v.pause(); });
+      }
+    }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Sync clip sources; seek to offset when a new source is loaded
+    // Clear timeouts when delays change while playing
+    useEffect(() => {
+      if (!isPlaying) return;
+      timeoutRefs.current.forEach((t) => { if (t !== null) clearTimeout(t); });
+      timeoutRefs.current = Array(MAX_SLOTS).fill(null);
+      // Re-trigger the play logic by pausing then the parent will re-trigger isPlaying
+      // (delays changed while not playing is the common case; if playing, user can reset)
+    }, [delays]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Cleanup timeouts on unmount
+    useEffect(() => () => {
+      timeoutRefs.current.forEach((t) => { if (t !== null) clearTimeout(t); });
+    }, []);
+
+    // Sync clip sources
     useEffect(() => {
       videoRefs.current.forEach((v, i) => {
         if (!v) return;
@@ -82,24 +128,10 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
         if (v.getAttribute('data-src') !== src) {
           v.setAttribute('data-src', src);
           v.src = src;
-          if (src) {
-            v.load();
-            v.addEventListener('loadedmetadata', () => {
-              v.currentTime = offsets[i] ?? 0;
-              if (isPlaying) v.play().catch(() => {});
-            }, { once: true });
-          }
+          if (src) v.load();
         }
       });
-    }, [slotClips]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Apply offset changes to paused videos immediately
-    useEffect(() => {
-      videoRefs.current.forEach((v, i) => {
-        if (!v || !v.src || isPlaying) return;
-        v.currentTime = offsets[i] ?? 0;
-      });
-    }, [offsets, isPlaying]);
+    }, [slotClips]);
 
     const handleDrop = useCallback(
       (e: React.DragEvent, i: number) => {
@@ -112,7 +144,6 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
 
     return (
       <div className={className}>
-        {/* Hidden video elements — always rendered, indexed 0–7 */}
         <div className="hidden">
           {Array.from({ length: MAX_SLOTS }).map((_, i) => (
             <video
@@ -125,7 +156,6 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
           ))}
         </div>
 
-        {/* Canvas wrapper — padding-top trick keeps aspect ratio regardless of canvas px size */}
         <div
           className="relative w-full rounded-xl overflow-hidden border border-gray-800 shadow-2xl bg-black"
           style={{ paddingTop }}
@@ -139,7 +169,6 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
 
           {layout && (
             <div className="absolute inset-0">
-              {/* Drop / clear overlays per panel */}
               {panels.map((panel, i) => {
                 const isHover = hoverSlot === i;
                 const isDragging = !!draggingClipId;
@@ -187,7 +216,6 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                 );
               })}
 
-              {/* Resize handles — only when resizable and not dragging a clip */}
               {resizable && !draggingClipId && onPanelsChange && (
                 <PanelResizer panels={panels} onChange={onPanelsChange} />
               )}

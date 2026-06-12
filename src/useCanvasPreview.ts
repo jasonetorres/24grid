@@ -6,23 +6,22 @@ const GAP = 3;
 interface Props {
   layout: LayoutDef | null;
   videoRefs: React.MutableRefObject<(HTMLVideoElement | null)[]>;
+  activeSlots: React.MutableRefObject<boolean[]>; // false = still in delay countdown, draw black
   canvasWidth: number;
   canvasHeight: number;
 }
 
-export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight }: Props) {
+export function useCanvasPreview({ layout, videoRefs, activeSlots, canvasWidth, canvasHeight }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Keep latest props accessible inside the stable RAF loop without restarting it
-  const stateRef = useRef({ layout, videoRefs, canvasWidth, canvasHeight });
+  const stateRef = useRef({ layout, videoRefs, activeSlots, canvasWidth, canvasHeight });
   useEffect(() => {
-    stateRef.current = { layout, videoRefs, canvasWidth, canvasHeight };
+    stateRef.current = { layout, videoRefs, activeSlots, canvasWidth, canvasHeight };
   });
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const previewCanvas = canvas;
 
     let rafId = 0;
 
@@ -30,6 +29,7 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
       ctx: CanvasRenderingContext2D,
       panel: PanelRect,
       video: HTMLVideoElement | null | undefined,
+      isActive: boolean,
       cw: number,
       ch: number,
       slotIndex: number
@@ -39,7 +39,11 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
       const pw = Math.round(panel.w * cw - GAP);
       const ph = Math.round(panel.h * ch - GAP);
 
-      if (video && video.readyState >= 2 && video.videoWidth > 0) {
+      if (!isActive) {
+        // Slot is in its delay countdown — show pure black
+        ctx.fillStyle = '#000';
+        ctx.fillRect(px, py, pw, ph);
+      } else if (video && video.readyState >= 2 && video.videoWidth > 0) {
         // cover-fit
         const vr = video.videoWidth / video.videoHeight;
         const pr = pw / ph;
@@ -60,7 +64,6 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
         drawPlaceholder(ctx, px, py, pw, ph, slotIndex);
       }
 
-      // panel border
       ctx.strokeStyle = '#000';
       ctx.lineWidth = GAP;
       ctx.strokeRect(px, py, pw, ph);
@@ -74,7 +77,6 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(px, py, pw, ph);
 
-      // subtle grid pattern
       ctx.strokeStyle = '#1e293b';
       ctx.lineWidth = 1;
       const spacing = 24;
@@ -85,7 +87,6 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
         ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px + pw, y); ctx.stroke();
       }
 
-      // slot number
       const fontSize = Math.max(12, Math.min(pw, ph) * 0.18);
       ctx.fillStyle = '#334155';
       ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
@@ -93,7 +94,6 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
       ctx.textBaseline = 'middle';
       ctx.fillText(String(slotIndex + 1), px + pw / 2, py + ph / 2);
 
-      // label below
       const labelSize = Math.max(9, fontSize * 0.35);
       ctx.fillStyle = '#1e3a5f';
       ctx.font = `500 ${labelSize}px Inter, system-ui, sans-serif`;
@@ -101,8 +101,8 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
     }
 
     function render() {
-      const { layout: l, videoRefs: vr, canvasWidth: cw, canvasHeight: ch } = stateRef.current;
-      const ctx = previewCanvas.getContext('2d');
+      const { layout: l, videoRefs: vr, activeSlots: as, canvasWidth: cw, canvasHeight: ch } = stateRef.current;
+      const ctx = canvas.getContext('2d');
       if (!ctx) { rafId = requestAnimationFrame(render); return; }
 
       ctx.fillStyle = '#000';
@@ -110,7 +110,7 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
 
       if (l) {
         l.panels.forEach((panel, i) => {
-          drawPanel(ctx, panel, vr.current[i], cw, ch, i);
+          drawPanel(ctx, panel, vr.current[i], as.current[i] ?? true, cw, ch, i);
         });
       }
 
@@ -119,7 +119,7 @@ export function useCanvasPreview({ layout, videoRefs, canvasWidth, canvasHeight 
 
     rafId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(rafId);
-  }, []); // intentionally empty — loop runs once, reads latest state via stateRef
+  }, []);
 
   return canvasRef;
 }
