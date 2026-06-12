@@ -33,6 +33,8 @@ interface Props {
   onClearSlot: (slotIndex: number) => void;
   onCropClick?: (slotIndex: number) => void;
   onSplitPanel?: (slotIndex: number, dir: 'h' | 'v') => void;
+  tapSelectedClipId?: string | null;
+  onTapSlot?: (slotIndex: number) => void;
   isPlaying: boolean;
   resizable?: boolean;
   aspectRatio?: AspectRatio;
@@ -61,6 +63,8 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
       onClearSlot,
       onCropClick,
       onSplitPanel,
+      tapSelectedClipId,
+      onTapSlot,
       isPlaying,
       resizable = false,
       aspectRatio = '16:9',
@@ -238,6 +242,19 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                             </div>
                           )}
                         </motion.div>
+                      )}
+
+                      {/* Tap-to-place overlay for mobile */}
+                      {tapSelectedClipId && !hasClip && !isDragging && (
+                        <div
+                          className="absolute inset-0 border-2 border-dashed border-amber-400 rounded flex items-center justify-center cursor-pointer"
+                          style={{ background: 'rgba(251,191,36,0.12)' }}
+                          onClick={() => onTapSlot?.(i)}
+                        >
+                          <span className="text-amber-400 text-xs font-bold bg-black/60 px-2 py-1 rounded">
+                            Tap to place
+                          </span>
+                        </div>
                       )}
 
                       {!isDragging && (

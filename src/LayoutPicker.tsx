@@ -47,12 +47,7 @@ const itemVariants = {
 
 export default function LayoutPicker({ selected, onSelect }: Props) {
   return (
-    <motion.div
-      className="grid grid-cols-4 gap-4"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-    >
+    <>
       {LAYOUTS.map((layout) => {
         const active = selected?.id === layout.id;
         return (
@@ -74,6 +69,6 @@ export default function LayoutPicker({ selected, onSelect }: Props) {
           </motion.button>
         );
       })}
-    </motion.div>
+    </>
   );
 }
