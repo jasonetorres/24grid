@@ -1,22 +1,23 @@
 import { useRef, useEffect } from 'react';
-import type { LayoutDef, PanelRect } from './types';
+import type { LayoutDef, PanelRect, CropSettings } from './types';
 
 const GAP = 3;
 
 interface Props {
   layout: LayoutDef | null;
   videoRefs: React.MutableRefObject<(HTMLVideoElement | null)[]>;
-  activeSlots: React.MutableRefObject<boolean[]>; // false = still in delay countdown, draw black
+  activeSlots: React.MutableRefObject<boolean[]>;
+  crops: React.MutableRefObject<CropSettings[]>;
   canvasWidth: number;
   canvasHeight: number;
 }
 
-export function useCanvasPreview({ layout, videoRefs, activeSlots, canvasWidth, canvasHeight }: Props) {
+export function useCanvasPreview({ layout, videoRefs, activeSlots, crops, canvasWidth, canvasHeight }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const stateRef = useRef({ layout, videoRefs, activeSlots, canvasWidth, canvasHeight });
+  const stateRef = useRef({ layout, videoRefs, activeSlots, crops, canvasWidth, canvasHeight });
   useEffect(() => {
-    stateRef.current = { layout, videoRefs, activeSlots, canvasWidth, canvasHeight };
+    stateRef.current = { layout, videoRefs, activeSlots, crops, canvasWidth, canvasHeight };
   });
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function useCanvasPreview({ layout, videoRefs, activeSlots, canvasWidth, 
       panel: PanelRect,
       video: HTMLVideoElement | null | undefined,
       isActive: boolean,
+      crop: CropSettings,
       cw: number,
       ch: number,
       slotIndex: number
@@ -40,21 +42,37 @@ export function useCanvasPreview({ layout, videoRefs, activeSlots, canvasWidth, 
       const ph = Math.round(panel.h * ch - GAP);
 
       if (!isActive) {
-        // Slot is in its delay countdown — show pure black
         ctx.fillStyle = '#000';
         ctx.fillRect(px, py, pw, ph);
       } else if (video && video.readyState >= 2 && video.videoWidth > 0) {
-        // cover-fit
-        const vr = video.videoWidth / video.videoHeight;
+        const vW = video.videoWidth;
+        const vH = video.videoHeight;
+        const vr = vW / vH;
         const pr = pw / ph;
-        let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+
+        // Cover-fit base crop
+        let baseSw: number, baseSh: number;
         if (vr > pr) {
-          sw = video.videoHeight * pr;
-          sx = (video.videoWidth - sw) / 2;
+          baseSw = vH * pr;
+          baseSh = vH;
         } else {
-          sh = video.videoWidth / pr;
-          sy = (video.videoHeight - sh) / 2;
+          baseSw = vW;
+          baseSh = vW / pr;
         }
+
+        // Apply zoom (shrink source rect → appears zoomed in)
+        const sw = baseSw / crop.zoom;
+        const sh = baseSh / crop.zoom;
+
+        // Apply pan — clamp so we never read outside the video frame
+        const maxPanX = (vW - sw) / 2;
+        const maxPanY = (vH - sh) / 2;
+        const sx = Math.max(0, Math.min(vW - sw, (vW - sw) / 2 + crop.panX * vW));
+        const sy = Math.max(0, Math.min(vH - sh, (vH - sh) / 2 + crop.panY * vH));
+
+        // Clamp pan magnitudes for reference (unused but kept for clarity)
+        void maxPanX; void maxPanY;
+
         try {
           ctx.drawImage(video, sx, sy, sw, sh, px, py, pw, ph);
         } catch {
@@ -101,7 +119,7 @@ export function useCanvasPreview({ layout, videoRefs, activeSlots, canvasWidth, 
     }
 
     function render() {
-      const { layout: l, videoRefs: vr, activeSlots: as, canvasWidth: cw, canvasHeight: ch } = stateRef.current;
+      const { layout: l, videoRefs: vr, activeSlots: as, crops: cr, canvasWidth: cw, canvasHeight: ch } = stateRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) { rafId = requestAnimationFrame(render); return; }
 
@@ -110,7 +128,7 @@ export function useCanvasPreview({ layout, videoRefs, activeSlots, canvasWidth, 
 
       if (l) {
         l.panels.forEach((panel, i) => {
-          drawPanel(ctx, panel, vr.current[i], as.current[i] ?? true, cw, ch, i);
+          drawPanel(ctx, panel, vr.current[i], as.current[i] ?? true, cr.current[i] ?? { panX: 0, panY: 0, zoom: 1 }, cw, ch, i);
         });
       }
 

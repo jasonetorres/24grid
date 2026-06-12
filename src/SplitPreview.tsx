@@ -7,7 +7,8 @@ import React, {
   useImperativeHandle,
 } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { LayoutDef, Clip, PanelRect } from './types';
+import { Crop } from 'lucide-react';
+import type { LayoutDef, Clip, PanelRect, CropSettings } from './types';
 import { useCanvasPreview } from './useCanvasPreview';
 import PanelResizer from './PanelResizer';
 
@@ -26,9 +27,11 @@ interface Props {
   onPanelsChange?: (p: PanelRect[]) => void;
   slotClips: (Clip | null)[];
   delays: number[];
+  crops: CropSettings[];
   draggingClipId: string | null;
   onDropClip: (slotIndex: number, clipId: string) => void;
   onClearSlot: (slotIndex: number) => void;
+  onCropClick?: (slotIndex: number) => void;
   isPlaying: boolean;
   resizable?: boolean;
   aspectRatio?: AspectRatio;
@@ -41,12 +44,6 @@ export interface SplitPreviewHandle {
 
 const MAX_SLOTS = 8;
 
-const panelVariants = {
-  initial: { opacity: 0, scale: 0.95 },
-  animate: { opacity: 1, scale: 1 },
-  exit:    { opacity: 0, scale: 0.92 },
-};
-
 const springTransition = { type: 'spring' as const, stiffness: 100, damping: 15 };
 
 const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
@@ -57,9 +54,11 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
       onPanelsChange,
       slotClips,
       delays,
+      crops,
       draggingClipId,
       onDropClip,
       onClearSlot,
+      onCropClick,
       isPlaying,
       resizable = false,
       aspectRatio = '16:9',
@@ -70,8 +69,12 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
     const { cw, ch, paddingTop } = DIMS[aspectRatio];
     const videoRefs = useRef<(HTMLVideoElement | null)[]>(Array(MAX_SLOTS).fill(null));
     const activeSlots = useRef<boolean[]>(Array(MAX_SLOTS).fill(true));
+    const cropsRef = useRef<CropSettings[]>(crops);
     const timeoutRefs = useRef<(ReturnType<typeof setTimeout> | null)[]>(Array(MAX_SLOTS).fill(null));
     const [hoverSlot, setHoverSlot] = useState<number | null>(null);
+
+    // Keep cropsRef current
+    useEffect(() => { cropsRef.current = crops; }, [crops]);
 
     useImperativeHandle(ref, () => ({ videoRefs }));
 
@@ -79,6 +82,7 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
       layout: layout ? { ...layout, panels } : null,
       videoRefs,
       activeSlots,
+      crops: cropsRef,
       canvasWidth: cw,
       canvasHeight: ch,
     });
@@ -159,7 +163,6 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
           ))}
         </div>
 
-        {/* Canvas container — animates paddingTop on aspect ratio change, never remounts */}
         <motion.div
           animate={{ paddingTop }}
           transition={{ type: 'spring', stiffness: 120, damping: 18 }}
@@ -179,22 +182,22 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
+                transition={{ duration: 0.15 }}
                 className="absolute inset-0"
               >
                 {panels.map((panel, i) => {
                   const isHover = hoverSlot === i;
                   const isDragging = !!draggingClipId;
                   const hasClip = !!slotClips[i];
+                  const hasCrop = crops[i] && (crops[i].zoom > 1 || crops[i].panX !== 0 || crops[i].panY !== 0);
 
                   return (
                     <motion.div
                       key={`${layout.id}-${i}`}
                       layout
-                      variants={panelVariants}
-                      initial="initial"
-                      animate="animate"
-                      exit="exit"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.92 }}
                       transition={springTransition}
                       className="absolute group"
                       style={{
@@ -207,6 +210,15 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                       onDragLeave={() => setHoverSlot(null)}
                       onDrop={(e) => handleDrop(e, i)}
                     >
+                      {/* "24"-style entrance flash — amber tint that fades out on mount */}
+                      <motion.div
+                        key={`flash-${layout.id}-${i}`}
+                        className="absolute inset-0 rounded pointer-events-none"
+                        initial={{ opacity: 1, backgroundColor: 'rgba(251,191,36,0.28)' }}
+                        animate={{ opacity: 0 }}
+                        transition={{ duration: 0.55, ease: 'easeOut', delay: i * 0.06 }}
+                      />
+
                       {isDragging && (
                         <motion.div
                           initial={{ opacity: 0 }}
@@ -227,13 +239,28 @@ const SplitPreview = forwardRef<SplitPreviewHandle, Props>(
                       )}
 
                       {!isDragging && hasClip && (
-                        <button
-                          onClick={() => onClearSlot(i)}
-                          className="absolute top-1 right-1 w-6 h-6 bg-black/70 hover:bg-red-500 rounded-full text-white text-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all leading-none z-10"
-                          title="Remove clip"
-                        >
-                          ×
-                        </button>
+                        <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-10">
+                          {onCropClick && (
+                            <button
+                              onClick={() => onCropClick(i)}
+                              className={`w-6 h-6 rounded-full text-xs flex items-center justify-center transition-colors ${
+                                hasCrop
+                                  ? 'bg-amber-400 text-black'
+                                  : 'bg-black/70 hover:bg-amber-400 text-white hover:text-black'
+                              }`}
+                              title="Crop & Pan"
+                            >
+                              <Crop className="w-3 h-3" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onClearSlot(i)}
+                            className="w-6 h-6 bg-black/70 hover:bg-red-500 rounded-full text-white text-sm flex items-center justify-center leading-none"
+                            title="Remove clip"
+                          >
+                            ×
+                          </button>
+                        </div>
                       )}
                     </motion.div>
                   );

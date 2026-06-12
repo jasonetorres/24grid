@@ -11,12 +11,14 @@ import {
   CheckCircle2,
   Clock,
 } from 'lucide-react';
-import type { Clip, LayoutDef, PanelRect } from './types';
+import type { Clip, LayoutDef, PanelRect, CropSettings } from './types';
+import { DEFAULT_CROP } from './types';
 import { LAYOUTS } from './layouts';
 import LayoutPicker from './LayoutPicker';
 import ClipLibrary from './ClipLibrary';
 import SplitPreview, { type SplitPreviewHandle, type AspectRatio, DIMS } from './SplitPreview';
 import SlotTimingEditor from './SlotTimingEditor';
+import CropEditor from './CropEditor';
 import LandingPage, { Logo } from './LandingPage';
 
 type View = 'landing' | 'studio';
@@ -30,12 +32,13 @@ const STEPS: { id: Step; label: string; icon: React.ReactNode }[] = [
 
 const EMPTY_SLOTS = Array(8).fill(null) as (Clip | null)[];
 const EMPTY_DELAYS = Array(8).fill(0) as number[];
+const EMPTY_CROPS = (): CropSettings[] => Array(8).fill(null).map(() => ({ ...DEFAULT_CROP }));
 
-const AR_OPTIONS: { value: AspectRatio; label: string; icon: string }[] = [
-  { value: '16:9', label: '16:9', icon: '⬛' },
-  { value: '9:16', label: '9:16', icon: '⬛' },
-  { value: '1:1',  label: '1:1',  icon: '⬛' },
-  { value: '4:5',  label: '4:5',  icon: '⬛' },
+const AR_OPTIONS: { value: AspectRatio; label: string }[] = [
+  { value: '16:9', label: '16:9' },
+  { value: '9:16', label: '9:16' },
+  { value: '1:1',  label: '1:1'  },
+  { value: '4:5',  label: '4:5'  },
 ];
 
 export default function App() {
@@ -47,6 +50,8 @@ export default function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [slotClips, setSlotClips] = useState<(Clip | null)[]>([...EMPTY_SLOTS]);
   const [delays, setDelays] = useState<number[]>([...EMPTY_DELAYS]);
+  const [crops, setCrops] = useState<CropSettings[]>(EMPTY_CROPS());
+  const [cropEditorSlot, setCropEditorSlot] = useState<number | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -60,6 +65,7 @@ export default function App() {
     setPanels(l.panels.map(p => ({ ...p })));
     setSlotClips([...EMPTY_SLOTS]);
     setDelays([...EMPTY_DELAYS]);
+    setCrops(EMPTY_CROPS());
     setIsPlaying(false);
   }
 
@@ -77,6 +83,7 @@ export default function App() {
       const clip = clips.find((c) => c.id === clipId) ?? null;
       setSlotClips((prev) => { const n = [...prev]; n[slotIndex] = clip; return n; });
       setDelays((prev) => { const n = [...prev]; n[slotIndex] = 0; return n; });
+      setCrops((prev) => { const n = [...prev]; n[slotIndex] = { ...DEFAULT_CROP }; return n; });
     },
     [clips]
   );
@@ -84,10 +91,15 @@ export default function App() {
   function handleClearSlot(i: number) {
     setSlotClips((prev) => { const n = [...prev]; n[i] = null; return n; });
     setDelays((prev) => { const n = [...prev]; n[i] = 0; return n; });
+    setCrops((prev) => { const n = [...prev]; n[i] = { ...DEFAULT_CROP }; return n; });
   }
 
   function handleDelayChange(i: number, val: number) {
     setDelays((prev) => { const n = [...prev]; n[i] = val; return n; });
+  }
+
+  function handleCropChange(i: number, crop: CropSettings) {
+    setCrops((prev) => { const n = [...prev]; n[i] = crop; return n; });
   }
 
   function handleResetLayout() {
@@ -200,7 +212,14 @@ export default function App() {
     : false;
 
   const hasAnyDelay = delays.some(d => d > 0);
-  const { label: outputLabel } = DIMS[aspectRatio];
+  const { label: outputLabel, cw, ch } = DIMS[aspectRatio];
+
+  // Compute aspect ratio of the active crop slot's panel (in canvas pixel space)
+  const cropPanelAspect = (() => {
+    if (cropEditorSlot === null || !panels[cropEditorSlot]) return cw / ch;
+    const p = panels[cropEditorSlot];
+    return (p.w * cw) / (p.h * ch);
+  })();
 
   return (
     <>
@@ -302,6 +321,7 @@ export default function App() {
                       panels={panels}
                       slotClips={slotClips}
                       delays={delays}
+                      crops={crops}
                       draggingClipId={null}
                       onDropClip={handleDropClip}
                       onClearSlot={handleClearSlot}
@@ -367,9 +387,11 @@ export default function App() {
                       onPanelsChange={setPanels}
                       slotClips={slotClips}
                       delays={delays}
+                      crops={crops}
                       draggingClipId={draggingId}
                       onDropClip={handleDropClip}
                       onClearSlot={handleClearSlot}
+                      onCropClick={setCropEditorSlot}
                       isPlaying={false}
                       resizable
                       aspectRatio={aspectRatio}
@@ -568,15 +590,17 @@ export default function App() {
                       onPanelsChange={setPanels}
                       slotClips={slotClips}
                       delays={delays}
+                      crops={crops}
                       draggingClipId={null}
                       onDropClip={handleDropClip}
                       onClearSlot={handleClearSlot}
+                      onCropClick={setCropEditorSlot}
                       isPlaying={isPlaying}
                       resizable
                       aspectRatio={aspectRatio}
                     />
                     <p className="text-xs text-gray-600 text-center mt-3">
-                      {outputLabel} · Drag panel edges to resize · Press Play to preview with delays
+                      {outputLabel} · Drag panel edges to resize · Hover panel for crop/clear · Press Play to preview with delays
                     </p>
                   </div>
                 </div>
@@ -584,6 +608,19 @@ export default function App() {
             )}
           </div>
         </div>
+      )}
+
+      {/* ── Crop Editor Modal ── */}
+      {cropEditorSlot !== null && slotClips[cropEditorSlot] && (
+        <CropEditor
+          slotIndex={cropEditorSlot}
+          clipName={slotClips[cropEditorSlot]!.name}
+          videoEl={previewRef.current?.videoRefs.current[cropEditorSlot] ?? null}
+          panelAspect={cropPanelAspect}
+          crop={crops[cropEditorSlot]}
+          onChange={(c) => handleCropChange(cropEditorSlot, c)}
+          onClose={() => setCropEditorSlot(null)}
+        />
       )}
     </>
   );
